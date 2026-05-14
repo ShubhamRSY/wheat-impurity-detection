@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../models:/app/models
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  grafana_data:
