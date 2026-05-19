@@ -39,6 +39,13 @@ warnings.filterwarnings('ignore')
 sns.set_style('whitegrid')
 plt.rcParams.update({'font.size': 12})
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJ_DIR = SCRIPT_DIR.parent
+MODEL_DIR = PROJ_DIR / 'models'
+REPORT_DIR = PROJ_DIR / 'reports'
+MODEL_DIR.mkdir(exist_ok=True)
+REPORT_DIR.mkdir(exist_ok=True)
+
 RANDOM_SEED = 42
 IMG_SIZE = 256
 BATCH_SIZE = 16
@@ -59,12 +66,20 @@ print('CUDA available:', torch.cuda.is_available())
 print('Using device:', DEVICE)
 
 # ---------- Dataset Loading ----------
-import kagglehub
-dataset_path = kagglehub.dataset_download('byh0007/wheat-images-with-impurity')
+try:
+    import kagglehub
+    dataset_path = kagglehub.dataset_download('byh0007/wheat-images-with-impurity')
+except (ImportError, Exception) as e:
+    print(f'Dataset download failed ({e}). Trying local path...')
+    dataset_path = str(PROJ_DIR / 'data' / 'wheat-impurity-detection')
 DATA_ROOT = Path(dataset_path) / 'train'
 IMG_DIR = DATA_ROOT / 'images'
 MASK_DIR = DATA_ROOT / 'masks'
 RATE_DIR = DATA_ROOT / 'impurity_rate'
+if not IMG_DIR.exists():
+    print(f'Error: Data not found at {IMG_DIR}')
+    print('Please download the dataset from Kaggle: https://www.kaggle.com/datasets/byh0007/wheat-images-with-impurity')
+    sys.exit(1)
 image_files = sorted([f for f in os.listdir(IMG_DIR) if f.endswith('.jpg')])
 sample_ids = [f.replace('.jpg', '') for f in image_files]
 print(f'\nTotal samples: {len(sample_ids)}')
@@ -292,7 +307,7 @@ for epoch in range(1, NUM_EPOCHS+1):
     print(f'Epoch {epoch:2d}/{NUM_EPOCHS} | Train L:{train_l:.4f} IoU:{train_i:.4f} | Val L:{val_l:.4f} IoU:{val_i:.4f} | LR:{lr:.2e}')
     if val_l < best_val_loss:
         best_val_loss = val_l
-        torch.save({'epoch':epoch,'model_state_dict':model.state_dict(),'val_loss':val_l,'val_iou':val_i}, 'best_model_v3.pth')
+        torch.save({'epoch':epoch,'model_state_dict':model.state_dict(),'val_loss':val_l,'val_iou':val_i}, str(MODEL_DIR / 'best_model_v3.pth'))
         print(f'  -> Saved (val_loss: {val_l:.4f})')
 print('Training complete!')
 
@@ -301,11 +316,11 @@ ep = range(1, len(train_hist['loss'])+1)
 for ax, key, title in zip(axes, ['loss','iou','dice'], ['Loss','IoU','Dice']):
     ax.plot(ep, train_hist[key], 'b-', label='Train'); ax.plot(ep, val_hist[key], 'r-', label='Val')
     ax.set_xlabel('Epoch'); ax.set_ylabel(title); ax.set_title(f'{title} Curves'); ax.legend(); ax.grid(True)
-plt.tight_layout(); plt.savefig('training_curves_v3.png', dpi=150, bbox_inches='tight'); plt.close()
+plt.tight_layout(); plt.savefig(str(REPORT_DIR / 'training_curves_v3.png'), dpi=150, bbox_inches='tight'); plt.close()
 
 # ---------- Evaluation ----------
 print('\n=== EVALUATION ===')
-checkpoint = torch.load('best_model_v3.pth', map_location=DEVICE)
+checkpoint = torch.load(str(MODEL_DIR / 'best_model_v3.pth'), map_location=DEVICE)
 model.load_state_dict(checkpoint['model_state_dict'])
 print(f'Loaded epoch {checkpoint["epoch"]} val_loss={checkpoint["val_loss"]:.4f}')
 model.eval()
@@ -331,7 +346,7 @@ bars = ax.barh(CLASS_NAMES, mean_class_iou, color=colors[:NUM_CLASSES])
 ax.axvline(mean_iou, color='black', linestyle='--', label=f'Mean IoU: {mean_iou:.4f}')
 ax.set_xlabel('IoU'); ax.set_title('Per-Class IoU (v3: Glass-improved)')
 for bar, val in zip(bars, mean_class_iou): ax.text(max(val+0.01,0.01), bar.get_y()+bar.get_height()/2, f'{val:.4f}', va='center')
-ax.legend(); plt.tight_layout(); plt.savefig('evaluation_per_class_iou_v3.png', dpi=150, bbox_inches='tight'); plt.close()
+ax.legend(); plt.tight_layout(); plt.savefig(str(REPORT_DIR / 'evaluation_per_class_iou_v3.png'), dpi=150, bbox_inches='tight'); plt.close()
 
 test_images_t = torch.cat(test_images_list, dim=0)
 test_preds_t = torch.cat(test_preds_list, dim=0)
@@ -345,7 +360,7 @@ for row, idx in enumerate(indices):
     axes[row,0].imshow(img); axes[row,0].set_title(f'Input {idx}'); axes[row,0].axis('off')
     axes[row,1].imshow(gt, cmap='tab10', vmin=0, vmax=NUM_CLASSES-1); axes[row,1].set_title('GT'); axes[row,1].axis('off')
     axes[row,2].imshow(pred, cmap='tab10', vmin=0, vmax=NUM_CLASSES-1); axes[row,2].set_title('Pred'); axes[row,2].axis('off')
-plt.tight_layout(); plt.savefig('evaluation_qualitative_v3.png', dpi=150, bbox_inches='tight'); plt.close()
+plt.tight_layout(); plt.savefig(str(REPORT_DIR / 'evaluation_qualitative_v3.png'), dpi=150, bbox_inches='tight'); plt.close()
 
 # Impurity rate estimation
 impurity_class_ids = [i for i,n in enumerate(CLASS_NAMES) if n in ['Wheat_Bran','Straw','Weed','Gravel','Glass']]
@@ -364,16 +379,16 @@ z = np.polyfit(true_rates, pred_rates, 1)
 ax.plot([0,1], np.poly1d(z)([0,1]), 'g-', lw=1.5, label=f'Fit (slope={z[0]:.3f})')
 ax.set_xlabel('True'); ax.set_ylabel('Predicted'); ax.set_title(f'Impurity Rate Estimation (v3)\nMAE={mae:.4f}, R2={r2:.4f}')
 ax.legend(); ax.grid(True, alpha=0.3)
-plt.tight_layout(); plt.savefig('impurity_rate_v3.png', dpi=150, bbox_inches='tight'); plt.close()
+plt.tight_layout(); plt.savefig(str(REPORT_DIR / 'impurity_rate_v3.png'), dpi=150, bbox_inches='tight'); plt.close()
 
 # ---------- Export ----------
 print('\n=== EXPORT ===')
 model.cpu()
-torch.jit.script(model).save('wheat_segmentation_v3.pt')
+torch.jit.script(model).save(str(MODEL_DIR / 'wheat_segmentation_v3.pt'))
 print('Exported TorchScript')
 dummy = torch.randn(1,3,IMG_SIZE,IMG_SIZE)
 try:
-    torch.onnx.export(model, dummy, 'wheat_segmentation_v3.onnx',
+    torch.onnx.export(model, dummy, str(MODEL_DIR / 'wheat_segmentation_v3.onnx'),
                       input_names=['input'], output_names=['output'],
                       dynamic_axes={'input':{0:'batch_size'},'output':{0:'batch_size'}}, opset_version=11)
     print('Exported ONNX')
